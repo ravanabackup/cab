@@ -1,0 +1,6 @@
+{
+  "name": "Uber Elite",
+  "description": "An ultra-polished premium Uber clone featuring OSRM routing, traffic signals, Supersonic Jet mode, precise geolocating tracking, and elegant driver dashboard widgets.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
