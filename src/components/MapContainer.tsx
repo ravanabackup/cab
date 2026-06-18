@@ -784,7 +784,7 @@ export default function MapContainer({
       } else if (activeVehicleType?.name === RideClass.UBER_AUTO) {
         targetSpeed = 33;
       } else if (activeVehicleType?.isJet) {
-        targetSpeed = 1236; // Supersonic Jet cruises at Mach 1 speed (1,236 km/h)!
+        targetSpeed = 11800; // Supersonic Jet cruises at Mach 1 speed (1,236 km/h)!
       } else if (activeVehicleType?.category === "Premium") {
         targetSpeed = 65;
       }
