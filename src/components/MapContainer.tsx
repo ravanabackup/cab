@@ -55,6 +55,17 @@ function playSonicBoomAudio() {
   }
 }
 
+export interface LiveFlight {
+  id: string;
+  callsign: string;
+  lat: number;
+  lng: number;
+  altitude: number; // in meters
+  speed: number;    // in km/h
+  heading: number;  // in degrees
+  airline: string;
+}
+
 interface MapContainerProps {
   pickup: Coordinates | null;
   dropoff: Coordinates | null;
@@ -75,6 +86,7 @@ interface MapContainerProps {
     interstateLeg?: "car_to_station" | "train_interstate" | "station_to_dest" | null;
   }) => void;
   isJetMode: boolean;
+  speedMultiplier?: number;
   onArrivedAtPickup?: () => void;
   onArrivedAtDestination?: () => void;
   clickToSetTypeOverride?: "pickup" | "dropoff" | null;
@@ -92,6 +104,7 @@ export default function MapContainer({
   onSelectCoordinates,
   onSimulationUpdate,
   isJetMode,
+  speedMultiplier = 1.0,
   onArrivedAtPickup,
   onArrivedAtDestination,
   clickToSetTypeOverride,
@@ -113,6 +126,12 @@ export default function MapContainer({
   const trafficMarkersRef = useRef<{ [id: string]: L.Marker }>({});
   const [nearbyVehicles, setNearbyVehicles] = useState<NearbyVehicle[]>([]);
   const nearbyMarkersRef = useRef<{ [id: string]: L.Marker }>({});
+
+  // Real-time commercial air traffic and dodging systems
+  const [airTraffic, setAirTraffic] = useState<LiveFlight[]>([]);
+  const airTrafficRef = useRef<LiveFlight[]>([]);
+  const airTrafficMarkersRef = useRef<{ [id: string]: L.Marker }>({});
+  const [dodgeAlert, setDodgeAlert] = useState<{ target: string; distance: number } | null>(null);
 
   const [mapTheme, setMapTheme] = useState<"dark" | "light">("dark");
   const [clickToSetType, setClickToSetType] = useState<"pickup" | "dropoff">("pickup");
@@ -286,6 +305,177 @@ export default function MapContainer({
       }
     });
   }, [nearbyVehicles, tripStatus]);
+
+  // Real-time Flight Traffic Tracker Effect: Fetch real world flights or generate resilient high-fidelity fallbacks
+  useEffect(() => {
+    // Only fetch flights when we have selected coordinates and driver is on an active Jet trip
+    if (!pickup || !dropoff || !isJetMode) {
+      setAirTraffic([]);
+      airTrafficRef.current = [];
+      Object.keys(airTrafficMarkersRef.current).forEach((id) => {
+        airTrafficMarkersRef.current[id].remove();
+      });
+      airTrafficMarkersRef.current = {};
+      setDodgeAlert(null);
+      return;
+    }
+
+    const fetchRealFlights = async () => {
+      try {
+        // Fetch flights inside India airspace (approx cover Bangalore, Mumbai, Delhi, Chennai)
+        const lamin = 6.0;
+        const lamax = 24.0;
+        const lomin = 71.0;
+        const lomax = 89.0;
+        const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lamax=${lamax}&lomin=${lomin}&lomax=${lomax}`;
+        
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("OpenSky Server error status code: " + res.status);
+        const data = await res.json();
+        
+        if (data && data.states) {
+          const fetched: LiveFlight[] = data.states.slice(0, 20).map((s: any) => {
+            const icao = s[0];
+            const callsign = (s[1] || `FLIGHT_${icao}`).trim();
+            const lng = parseFloat(s[5]);
+            const lat = parseFloat(s[6]);
+            const altitude = Math.round(parseFloat(s[7] || "10500")); // meters
+            const speed = Math.round(parseFloat(s[9] || "220") * 3.6); // m/s to km/h
+            const heading = Math.round(parseFloat(s[10] || "180"));
+            
+            let airline = "Commercial Jet";
+            if (callsign.startsWith("AIC") || callsign.startsWith("AI")) airline = "Air India";
+            else if (callsign.startsWith("IGO") || callsign.startsWith("6E")) airline = "IndiGo";
+            else if (callsign.startsWith("SEJ") || callsign.startsWith("SG")) airline = "SpiceJet";
+            else if (callsign.startsWith("VTI") || callsign.startsWith("UK")) airline = "Vistara";
+            else if (callsign.startsWith("UAE") || callsign.startsWith("EK")) airline = "Emirates";
+            else if (callsign.startsWith("SIA") || callsign.startsWith("SQ")) airline = "Singapore Air";
+            
+            return { id: icao, callsign, lat, lng, altitude, speed, heading, airline };
+          });
+          
+          if (fetched.length > 0) {
+            setAirTraffic((prev) => {
+              const list = [...fetched];
+              if (list.length < 15) {
+                const simulated = generateHighFidelitySimulatedFlights(15 - list.length);
+                list.push(...simulated);
+              }
+              airTrafficRef.current = list;
+              return list;
+            });
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("CORS or network blockage on OpenSky API fetch. Deploying luxury real-time tracking fallback data:", err);
+      }
+
+      // Offline or CORS fallback scenario: Seed pristine flight layout near current route region 
+      setAirTraffic((prev) => {
+        if (prev.length > 0) return prev; // keep moving current seeded flights
+        const seeded = generateHighFidelitySimulatedFlights(18);
+        airTrafficRef.current = seeded;
+        return seeded;
+      });
+    };
+
+    const generateHighFidelitySimulatedFlights = (count: number): LiveFlight[] => {
+      const airlines = [
+        { name: "Air India", prefix: "AI" },
+        { name: "IndiGo", prefix: "6E" },
+        { name: "SpiceJet", prefix: "SG" },
+        { name: "Emirates", prefix: "EK" },
+        { name: "Lufthansa", prefix: "LH" },
+        { name: "Singapore Air", prefix: "SQ" },
+        { name: "Qatar Airways", prefix: "QR" },
+        { name: "Vistara", prefix: "UK" }
+      ];
+      
+      const list: LiveFlight[] = [];
+      const routeCenterLats = [12.9716, 13.04, 14.12, 11.45, 12.23, 13.58, 15.18, 10.82];
+      const routeCenterLngs = [77.5946, 78.18, 76.45, 76.78, 79.12, 75.82, 74.45, 78.92];
+
+      for (let i = 0; i < count; i++) {
+        const air = airlines[Math.floor(Math.random() * airlines.length)];
+        const callsign = `${air.prefix}${Math.floor(100 + Math.random() * 899)}`;
+        const refLatKey = routeCenterLats[i % routeCenterLats.length];
+        const refLngKey = routeCenterLngs[i % routeCenterLngs.length];
+
+        // Seed them around current tracking areas to ensure they cross paths for dodging!
+        const lat = refLatKey + (Math.random() - 0.5) * 2.8;
+        const lng = refLngKey + (Math.random() - 0.5) * 2.8;
+
+        list.push({
+          id: `f_sim_${callsign}_${i}_${Date.now()}`,
+          callsign,
+          lat,
+          lng,
+          altitude: Math.floor(9000 + Math.random() * 3200), // FL300 - FL400 flight level
+          speed: Math.floor(750 + Math.random() * 160), // 750 - 910 km/h cruising velocity
+          heading: Math.floor(Math.random() * 360),
+          airline: air.name
+        });
+      }
+      return list;
+    };
+
+    fetchRealFlights();
+    const interval = setInterval(fetchRealFlights, 8500);
+    return () => clearInterval(interval);
+  }, [pickup, dropoff, isJetMode]);
+
+  // Leaflet Rendering effect to handle drawing flight markers onto the map
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    if (!isJetMode || airTraffic.length === 0) {
+      Object.keys(airTrafficMarkersRef.current).forEach((id) => {
+        airTrafficMarkersRef.current[id].remove();
+      });
+      airTrafficMarkersRef.current = {};
+      return;
+    }
+
+    airTraffic.forEach((v) => {
+      const customIcon = L.divIcon({
+        className: "custom-leaflet-div-icon flight-marker-layer",
+        html: `
+          <div class="relative w-10 h-10 flex items-center justify-center pointer-events-none">
+            <!-- Intercept warning halo if close -->
+            <div class="absolute inset-0 w-8 h-8 rounded-full border border-sky-400/30 bg-sky-500/5 animate-pulse"></div>
+            
+            <div style="transform: rotate(${v.heading}deg);">
+              <svg width="22" height="22" viewBox="0 0 40 40">
+                ${getVehicleMarkup("COMMERCIAL_JET" as any, 0, false)}
+              </svg>
+            </div>
+            
+            <div class="absolute -top-7 left-1/2 -translate-x-1/2 bg-zinc-950/90 border border-sky-500/35 text-sky-400 text-[8px] font-mono px-1 rounded shadow-md whitespace-nowrap leading-none py-0.5 tracking-tighter">
+              ${v.callsign} <span class="text-zinc-500">•</span> FL${Math.round(v.altitude / 30.48)}
+            </div>
+          </div>
+        `,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      });
+
+      if (airTrafficMarkersRef.current[v.id]) {
+        airTrafficMarkersRef.current[v.id].setLatLng([v.lat, v.lng]);
+        airTrafficMarkersRef.current[v.id].setIcon(customIcon);
+      } else {
+        const marker = L.marker([v.lat, v.lng], { icon: customIcon }).addTo(mapRef.current!);
+        airTrafficMarkersRef.current[v.id] = marker;
+      }
+    });
+
+    Object.keys(airTrafficMarkersRef.current).forEach((id) => {
+      if (!airTraffic.some((v) => v.id === id)) {
+        airTrafficMarkersRef.current[id].remove();
+        delete airTrafficMarkersRef.current[id];
+      }
+    });
+  }, [airTraffic, isJetMode]);
 
   // Handle Red/Yellow/Green Traffic lights blinking
   useEffect(() => {
@@ -784,10 +974,33 @@ export default function MapContainer({
       } else if (activeVehicleType?.name === RideClass.UBER_AUTO) {
         targetSpeed = 33;
       } else if (activeVehicleType?.isJet) {
-        targetSpeed = 11800; // Supersonic Jet cruises at Mach 1 speed (1,236 km/h)!
+        targetSpeed = 1236; // Supersonic Jet cruises at Mach 1 speed (1,236 km/h)!
       } else if (activeVehicleType?.category === "Premium") {
         targetSpeed = 65;
       }
+    }
+
+    // Apply Speed Multiplier Override
+    if (speedMultiplier && speedMultiplier > 1.0) {
+      targetSpeed = targetSpeed * speedMultiplier;
+    }
+
+    // Smoothly glide other commercial planes in real-time along their vectors on every tick
+    if (isJetMode && airTrafficRef.current.length > 0) {
+      airTrafficRef.current = airTrafficRef.current.map((plane) => {
+        const rad = (plane.heading * Math.PI) / 180;
+        const speedMps = plane.speed / 3.6;
+        const distStep = speedMps * 0.1; // distance moved in 100ms
+        const deltaLat = Math.sin(rad) * (distStep / 111000);
+        const deltaLng = Math.cos(rad) * (distStep / 111000);
+        return {
+          ...plane,
+          lat: plane.lat + deltaLat,
+          lng: plane.lng + deltaLng,
+        };
+      });
+      // push updates to state to refresh other flight markers
+      setAirTraffic([...airTrafficRef.current]);
     }
 
     // If approaching a traffic light (not in high speed train)
@@ -846,9 +1059,42 @@ export default function MapContainer({
 
     const finalCoord = currentDriverCoordsRef.current || currentLoc;
 
+    // ACTIVE COLLISION EN-ROUTE DETECTION & AUTOMUTUAL DODGING MANEUVERS
+    let finalDrawnLat = finalCoord.lat;
+    let finalDrawnLng = finalCoord.lng;
+    let activeDodge: { target: string; distance: number } | null = null;
+
+    if (isJetMode && airTrafficRef.current.length > 0) {
+      let totalPushLat = 0;
+      let totalPushLng = 0;
+
+      airTrafficRef.current.forEach((plane) => {
+        const dMeters = getDistanceMeters(finalCoord.lat, finalCoord.lng, plane.lat, plane.lng);
+        // Collision threshold: 3.8 kilometers! If a commercial plane enters this, our jet dodges.
+        if (dMeters < 3800) {
+          activeDodge = { target: plane.callsign, distance: Math.round(dMeters) };
+          
+          // Repulsive angle calculation
+          const angleRad = Math.atan2(finalCoord.lat - plane.lat, finalCoord.lng - plane.lng);
+          // Progressively stronger lateral swerve the closer the planes come to each other
+          const repulsionRatio = Math.max(0.1, 1 - dMeters / 3800);
+          const pushDistanceDegrees = 0.007 * repulsionRatio; // ~770 meters of lateral displacement
+          
+          totalPushLat += Math.sin(angleRad) * pushDistanceDegrees;
+          totalPushLng += Math.cos(angleRad) * pushDistanceDegrees;
+        }
+      });
+
+      if (activeDodge) {
+        finalDrawnLat += totalPushLat;
+        finalDrawnLng += totalPushLng;
+      }
+    }
+    setDodgeAlert(activeDodge);
+
     // Update coordinates and angle rotation on marker
     if (driverMarkerRef.current) {
-      driverMarkerRef.current.setLatLng(finalCoord);
+      driverMarkerRef.current.setLatLng(new L.LatLng(finalDrawnLat, finalDrawnLng));
 
       let simulatedTypeMark = activeVehicleType?.name || RideClass.UBER_X;
       if (interstateLegVal === "train_interstate") {
@@ -987,6 +1233,24 @@ export default function MapContainer({
           <polygon points="20,8 16,14 24,14" fill="#fcfae6" />
           <!-- Top black canopy bounds -->
           <rect x="13" y="15" width="14" height="6" fill="#18181b" rx="1" />
+        `;
+        break;
+
+      case "COMMERCIAL_JET" as any:
+        // A sleek airline carrier flight layout
+        colorHex = "#3b82f6"; // Royal blue theme
+        svgPath = `
+          <!-- Left Wing -->
+          <path d="M20,8 L2,24 L20,20 Z" fill="${colorHex}" stroke="#111" stroke-width="1" />
+          <!-- Right Wing -->
+          <path d="M20,8 L38,24 L20,20 Z" fill="${colorHex}" stroke="#111" stroke-width="1" />
+          <!-- Fuselage -->
+          <ellipse cx="20" cy="18" rx="3.5" ry="14" fill="#ffffff" stroke="#111" stroke-width="1" />
+          <!-- Cockpit -->
+          <ellipse cx="20" cy="7" rx="1.5" ry="3" fill="#1e293b" />
+          <!-- Stabilizer tail planes -->
+          <path d="M20,28 L14,33 L20,31 Z" fill="#64748b" stroke="#111" stroke-width="0.8" />
+          <path d="M20,28 L26,33 L20,31 Z" fill="#64748b" stroke="#111" stroke-width="0.8" />
         `;
         break;
 
@@ -1130,6 +1394,27 @@ export default function MapContainer({
           </div>
         </div>
       </div>
+
+      {/* GLOWING TACTICAL COLLISION DODGE OVERLAY HUD */}
+      {dodgeAlert && (
+        <div className="absolute top-28 left-4 z-[999] pointer-events-none max-w-[300px]">
+          <div className="bg-rose-950/95 border-2 border-rose-500/80 text-rose-200 px-3.5 py-3 rounded-xl shadow-[0_0_25px_rgba(239,68,68,0.45)] backdrop-blur-md flex items-center gap-3">
+            <div className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+            </div>
+            <div className="text-left font-sans">
+              <span className="font-extrabold text-[10px] tracking-widest uppercase text-rose-400 block">⚠️ COLLISION COUSE DODGE</span>
+              <p className="text-xs font-bold leading-tight mt-0.5 text-white">
+                DODGING Plane <span className="text-rose-300 font-mono underline">{dodgeAlert.target}</span>
+              </p>
+              <span className="text-[9px] text-rose-300/80 font-mono block mt-0.5">
+                Proximity: {dodgeAlert.distance}m • Autonomous Evasion Swerve Active
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Map Division Root */}
       <div id={mapContainerId} className="w-full h-full bg-zinc-900" />

@@ -92,6 +92,7 @@ export default function App() {
   const [stops, setStops] = useState<RouteStop[]>([]);
   const [isInterstateMode, setIsInterstateMode] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [speedMultiplier, setSpeedMultiplier] = useState(1.0);
   const [activeLeg, setActiveLeg] = useState<"car_to_station" | "train_interstate" | "station_to_dest" | null>(null);
   const [isMobileCollapsed, setIsMobileCollapsed] = useState(false);
 
@@ -276,6 +277,7 @@ export default function App() {
     setAssignedDriver(null);
     setActiveVehicleType(null);
     setBookedStats(null);
+    setSpeedMultiplier(1.0);
     triggerToast("Booking request cancelled successfully.", "warning");
   };
 
@@ -285,6 +287,7 @@ export default function App() {
     setAssignedDriver(null);
     setActiveVehicleType(null);
     setBookedStats(null);
+    setSpeedMultiplier(1.0);
     setDropoff(null);
     setDropoffAddress("");
     setStops([]);
@@ -396,6 +399,12 @@ export default function App() {
                   onBeginTrip={handleBeginTrip}
                   onCompleteTrip={handleCompleteTrip}
                   pickupWaitCountdown={pickupWaitCountdown}
+                  speedMultiplier={speedMultiplier}
+                  onToggleSpeedMultiplier={() => {
+                    const nextMult = speedMultiplier === 1.0 ? 1.5 : speedMultiplier === 1.5 ? 2.0 : speedMultiplier === 2.0 ? 3.0 : speedMultiplier === 3.0 ? 5.0 : 1.0;
+                    setSpeedMultiplier(nextMult);
+                    triggerToast(`Velocity Override boosted to ${nextMult}x Speed!`, "success");
+                  }}
                 />
               </div>
             )
@@ -448,6 +457,7 @@ export default function App() {
             }
           }}
           isJetMode={activeVehicleType?.isJet || false}
+          speedMultiplier={speedMultiplier}
           onArrivedAtPickup={handleArrivedAtPickup}
           onArrivedAtDestination={handleArrivedAtDestination}
           clickToSetTypeOverride={activeInputType}

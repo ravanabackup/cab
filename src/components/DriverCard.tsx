@@ -19,6 +19,8 @@ interface DriverCardProps {
   onBeginTrip: () => void; // Trigger en route -> trip in progress transition
   onCompleteTrip: () => void; // Trigger trip complete
   pickupWaitCountdown: number | null;
+  speedMultiplier?: number;
+  onToggleSpeedMultiplier?: () => void;
 }
 
 export default function DriverCard({
@@ -35,6 +37,8 @@ export default function DriverCard({
   onBeginTrip,
   onCompleteTrip,
   pickupWaitCountdown,
+  speedMultiplier = 1.0,
+  onToggleSpeedMultiplier,
 }: DriverCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -46,7 +50,7 @@ export default function DriverCard({
     if (!isJet) return 1.0;
     if (speed <= 3) return 1.0;
     // 1G baseline up to 4.2G for maximum cruise speed (1,236 km/h)
-    const baseG = 1.0 + (speed / 11800) * 3.2;
+    const baseG = 1.0 + (speed / 1236) * 3.2;
     // Adding micro vibratory fluctuations for sensory feedback representation
     const jitter = Math.sin(Date.now() / 250) * 0.05;
     return parseFloat(Math.min(5.0, Math.max(1.0, baseG + jitter)).toFixed(2));
@@ -145,6 +149,44 @@ export default function DriverCard({
             <span>AIR DENSITY: 0.12 kg/m³</span>
             <span>THRUST VECTOR: ±15°</span>
           </div>
+        </div>
+      )}
+
+      {/* VELOCITY OVERRIDE CONTROL BUTTON */}
+      {onToggleSpeedMultiplier && (
+        <div className="mt-3">
+          <button
+            onClick={onToggleSpeedMultiplier}
+            className={`w-full py-2.5 px-3 rounded-xl border flex items-center justify-between text-xs transition-all duration-300 select-none cursor-pointer ${
+              speedMultiplier > 1.0 
+                ? isJet
+                  ? "bg-purple-950/45 border-purple-500/70 text-purple-200 shadow-[0_0_15px_rgba(168,85,247,0.25)] hover:bg-purple-900/40"
+                  : "bg-amber-950/45 border-amber-500/70 text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.2)] hover:bg-amber-900/40"
+                : "bg-zinc-950/80 border-zinc-900 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className={`p-1.5 rounded-lg ${speedMultiplier > 1.0 ? isJet ? 'bg-purple-500/10 text-purple-300' : 'bg-amber-500/10 text-amber-300' : 'bg-zinc-900 text-zinc-500'}`}>
+                <TrendingUp className={`w-4 h-4 ${speedMultiplier > 1.0 ? "animate-bounce" : ""}`} />
+              </div>
+              <div className="text-left font-sans">
+                <span className="font-bold block text-[10px] tracking-wider uppercase">Velocity Speed Override</span>
+                <span className="text-[9px] text-zinc-500 block font-mono">Tap to multiply cruise speed parameters</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 font-mono">
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-black ${
+                speedMultiplier > 1.0 
+                  ? isJet 
+                    ? "bg-purple-500/20 text-purple-300" 
+                    : "bg-amber-500/20 text-amber-300" 
+                  : "bg-zinc-900 text-zinc-500"
+              }`}>
+                {speedMultiplier.toFixed(1)}x
+              </span>
+              <span className="text-[10px] text-zinc-500 font-bold font-sans">►</span>
+            </div>
+          </button>
         </div>
       )}
 
