@@ -50,7 +50,7 @@ export default function DriverCard({
     if (!isJet) return 1.0;
     if (speed <= 3) return 1.0;
     // 1G baseline up to 4.2G for maximum cruise speed (1,236 km/h)
-    const baseG = 1.0 + (speed / 1236) * 3.2;
+    const baseG = 1.0 + (speed / 11800) * 3.2;
     // Adding micro vibratory fluctuations for sensory feedback representation
     const jitter = Math.sin(Date.now() / 250) * 0.05;
     return parseFloat(Math.min(5.0, Math.max(1.0, baseG + jitter)).toFixed(2));
